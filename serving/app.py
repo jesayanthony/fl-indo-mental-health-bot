@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 # ---------- Config ----------
 MODEL_BUCKET = os.getenv("MODEL_BUCKET", "mental-health-fl-bot")
-MODEL_SUBDIR = os.getenv("MODEL_SUBDIR", "t5_fedavg_demo")
+MODEL_SUBDIR = os.getenv("MODEL_SUBDIR", "cendol_counseling_ft")
 MODEL_LOCAL_DIR = os.getenv("MODEL_LOCAL_DIR", "/app/model")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "indonlp/cendol-mt5-small-chat")
 
@@ -111,7 +111,34 @@ async def chat(req: ChatRequest, request: Request):
     if req.history:
         history_text = "\n".join(req.history[-5:])
 
-    prompt = ""
+    persona = """
+        Kamu adalah asisten kesehatan mental dalam bahasa Indonesia.
+        Sifatmu empatik, hangat, dan tidak menghakimi. 
+        Tugasmu adalah:
+        - Membantu pengguna mengekspresikan perasaan dengan aman.
+        - Memberikan validasi dan dukungan emosional.
+        - Menawarkan saran ringan seperti teknik relaksasi, journaling, atau mencari bantuan profesional.
+        Hal yang TIDAK BOLEH kamu lakukan:
+        - Memberikan diagnosis medis atau psikologis.
+        - Menyarankan obat, dosis, atau tindakan medis spesifik.
+        - Menghakimi atau menyalahkan pengguna.
+
+        Jawabanmu:
+        - Pendek (2–5 kalimat).
+        - Menggunakan bahasa Indonesia yang sopan dan mudah dipahami.
+        - Sertakan disclaimer singkat bahwa kamu bukan tenaga profesional.
+    """
+
+    history_text = ""
+    if req.history:
+        history_text = "\n".join(req.history[-5:])
+
+    prompt = persona.strip() + "\n\n"
+    if history_text:
+        prompt += f"Riwayat percakapan sebelumnya:\n{history_text}\n\n"
+
+    prompt += f"Percakapan baru:\nPengguna: {req.message}\nAsisten:"
+
     if history_text:
         prompt += f"Riwayat percakapan sebelumnya:\n{history_text}\n\n"
     prompt += f"Pengguna: {req.message}\nAsisten:"
