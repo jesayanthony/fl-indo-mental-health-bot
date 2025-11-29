@@ -62,6 +62,40 @@ class ChatResponse(BaseModel):
 app = FastAPI(title="Mental Health FL Chatbot")
 print("[INFO] Starting up. Using device:", DEVICE)
 
+# ----- Model load with robust fallback -----
+from pathlib import Path
+
+tokenizer = None
+model = None
+
+try:
+    # Try to download FL model from GCS
+    download_model_from_gcs(MODEL_BUCKET, MODEL_SUBDIR, MODEL_LOCAL_DIR)
+
+    local_path = Path(MODEL_LOCAL_DIR)
+    has_files = local_path.exists() and any(local_path.iterdir())
+
+    if not has_files:
+        raise FileNotFoundError(
+            f"No model files found under {MODEL_LOCAL_DIR}, falling back to HF model."
+        )
+
+    print(f"[INFO] Loading tokenizer/model from local dir: {MODEL_LOCAL_DIR}")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_LOCAL_DIR)
+    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_LOCAL_DIR)
+    print("[INFO] Loaded model from GCS checkpoint.")
+
+except Exception as e:
+    print("[ERROR] Failed to load model from local dir:", e)
+    print(f"[INFO] Falling back to HF model: {FALLBACK_MODEL}")
+    tokenizer = AutoTokenizer.from_pretrained(FALLBACK_MODEL)
+    model = AutoModelForSeq2SeqLM.from_pretrained(FALLBACK_MODEL)
+
+model.to(DEVICE)
+model.eval()
+print("[INFO] Model ready.")
+
+
 PERSONA = """
 Kamu adalah asisten konseling kesehatan mental berbahasa Indonesia.
 Peranmu:
