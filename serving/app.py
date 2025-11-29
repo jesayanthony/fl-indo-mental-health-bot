@@ -1,6 +1,8 @@
 # serving/app.py
 
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 import os
 import time
@@ -69,22 +71,13 @@ class ChatResponse(BaseModel):
 
 app = FastAPI(title="Mental Health FL Chatbot")
 
-# Allow CORS for Flutter web / mobile dev
-origins = [
-    "http://localhost:50835",  # Flutter web dev (adjust if different port)
-    "http://localhost:5173",
-    "http://127.0.0.1:50835",
-    "http://127.0.0.1:5173",
-    # In prod you can restrict this more, but for now:
-    "*",
-]
-
+# CORS for Flutter web + any future frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],          # allow all origins for now
+    allow_credentials=False,      # must be False if you use "*"
+    allow_methods=["*"],          # allow all HTTP methods
+    allow_headers=["*"],          # allow all headers
 )
 
 
