@@ -8,7 +8,6 @@ from typing import List, Optional
 import torch
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
 from pydantic import BaseModel
 from google.cloud import storage
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -23,7 +22,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_num_threads(1)
 
 
-# ---------- Helper to download model from GCS ----------
 def download_model_from_gcs(bucket_name: str, subdir: str, local_dir: str):
     local_path = Path(local_dir)
     if local_path.exists() and any(local_path.iterdir()):
@@ -49,10 +47,8 @@ def download_model_from_gcs(bucket_name: str, subdir: str, local_dir: str):
         print(f"[INFO] Download finished in {time.time() - t0:.2f}s")
     except Exception as e:
         print("[ERROR] Failed to download model from GCS:", e)
-        # we'll fall back to HF base model below
 
 
-# ---------- Request/response models ----------
 class ChatRequest(BaseModel):
     user_id: str
     message: str
@@ -63,21 +59,10 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-# ---------- App & model init ----------
 app = FastAPI(title="Mental Health FL Chatbot")
-
-# Add CORS middleware - THIS IS THE KEY FIX
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:55542", "http://localhost:*"],  # Add your Flutter origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods including OPTIONS
-    allow_headers=["*"],  # Allows all headers
-)
-
 print("[INFO] Starting up. Using device:", DEVICE)
 
-# Load model (GCS -> local -> load; fallback to HF if needed)
+# ----- Model load -----
 try:
     download_model_from_gcs(MODEL_BUCKET, MODEL_SUBDIR, MODEL_LOCAL_DIR)
     print(f"[INFO] Loading tokenizer/model from {MODEL_LOCAL_DIR}")
@@ -95,16 +80,29 @@ model.eval()
 print("[INFO] Model ready.")
 
 
-# ---------- Routes ----------
+def cors_headers(request: Request) -> dict:
+    origin = request.headers.get("origin") or "*"
+    if origin == "null":
+        origin = "*"
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    }
+
+
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(request: Request):
+    return JSONResponse(content={"status": "ok"}, headers(cors_headers(request)))
 
 
-# You can remove the manual OPTIONS handler since CORSMiddleware handles it
+@app.options("/chat")
+async def options_chat(request: Request):
+    return PlainTextResponse("", status_code=200, headers=cors_headers(request))
+
+
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    # Build simple conversational prompt
+async def chat(req: ChatRequest, request: Request):
     history_text = ""
     if req.history:
         history_text = "\n".join(req.history[-5:])
@@ -133,4 +131,7 @@ async def chat(req: ChatRequest):
 
     reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    return {"reply": reply}
+    return JSONResponse(
+        content={"reply": reply},
+        headers=cors_headers(request),
+    )
