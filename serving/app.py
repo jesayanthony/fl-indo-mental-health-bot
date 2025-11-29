@@ -76,9 +76,8 @@ try:
     has_files = local_path.exists() and any(local_path.iterdir())
 
     if not has_files:
-        raise FileNotFoundError(
-            f"No model files found under {MODEL_LOCAL_DIR}, falling back to HF model."
-        )
+        print(f"[WARN] No model files found under {MODEL_LOCAL_DIR}, will try HF model.")
+        raise FileNotFoundError(f"No model files under {MODEL_LOCAL_DIR}")
 
     print(f"[INFO] Loading tokenizer/model from local dir: {MODEL_LOCAL_DIR}")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_LOCAL_DIR)
@@ -87,13 +86,24 @@ try:
 
 except Exception as e:
     print("[ERROR] Failed to load model from local dir:", e)
-    print(f"[INFO] Falling back to HF model: {FALLBACK_MODEL}")
-    tokenizer = AutoTokenizer.from_pretrained(FALLBACK_MODEL)
-    model = AutoModelForSeq2SeqLM.from_pretrained(FALLBACK_MODEL)
+    print(f"[INFO] Trying to load fallback HF model: {FALLBACK_MODEL}")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(FALLBACK_MODEL)
+        model = AutoModelForSeq2SeqLM.from_pretrained(FALLBACK_MODEL)
+        print("[INFO] Loaded fallback HF model successfully.")
+    except Exception as e2:
+        print("[CRITICAL] Failed to load HF model as well:", e2)
+        print("[INFO] Falling back to simple rule-based responder (no ML).")
+        tokenizer = None
+        model = None
 
-model.to(DEVICE)
-model.eval()
-print("[INFO] Model ready.")
+if model is not None:
+    model.to(DEVICE)
+    model.eval()
+    print("[INFO] Model ready.")
+else:
+    print("[WARN] No ML model loaded. Using rule-based responses only.")
+
 
 
 PERSONA = """
@@ -158,16 +168,60 @@ def health(request: Request):
 async def options_chat(request: Request):
     return PlainTextResponse("", status_code=200, headers=cors_headers(request))
 
+def rule_based_reply(message: str) -> str:
+    msg_lower = message.lower()
+
+    if any(word in msg_lower for word in ["cemas", "anxious", "takut", "anxiety"]):
+        return (
+            "Aku ikut merasakan kecemasan yang kamu alami. "
+            "Rasanya pasti melelahkan kalau pikiran terus berputar dan sulit tenang.\n\n"
+            "Coba tarik napas pelan beberapa kali dan sadari dulu apa yang paling sering kamu khawatirkan. "
+            "Kalau kamu bersedia, kamu bisa ceritakan lebih detail kapan rasa cemas ini mulai muncul dan apa yang biasanya memicunya."
+        )
+    if any(word in msg_lower for word in ["sedih", "down", "depres", "putus asa"]):
+        return (
+            "Terima kasih sudah berani cerita. Kedengarannya kamu sedang merasa sangat sedih dan mungkin cukup sendirian.\n\n"
+            "Perasaan itu valid, dan wajar kalau kamu merasa lelah. "
+            "Apa yang belakangan ini paling sering membuat kamu merasa seperti ini?"
+        )
+    if any(word in msg_lower for word in ["marah", "kesal", "frustrasi"]):
+        return (
+            "Sepertinya kamu sedang memendam banyak rasa marah atau kesal. "
+            "Emosi seperti itu wajar dan penting untuk diakui, bukan dipendam terus.\n\n"
+            "Apa yang terjadi belakangan ini sampai membuatmu merasa seperti itu?"
+        )
+    if any(word in msg_lower for word in ["tidur", "insomnia", "susah tidur"]):
+        return (
+            "Sulit tidur memang bisa sangat mengganggu, baik fisik maupun mental. "
+            "Tubuh dan pikiran jadi terasa makin lelah.\n\n"
+            "Biasanya sebelum tidur, apa yang paling sering ada di pikiranmu?"
+        )
+
+    # generic fallback
+    return (
+        "Aku dengar kamu sedang mengalami masa yang cukup berat. "
+        "Terima kasih sudah mau berbagi cerita di sini.\n\n"
+        "Boleh ceritakan lebih detail apa yang sedang kamu rasakan dan apa yang terjadi belakangan ini?"
+    )
+
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
-    # Format history into a compact conversation
     history_text = ""
     if req.history:
-        last_turns = req.history[-6:]  # last few turns
+        last_turns = req.history[-6:]
         history_text = "\n".join(last_turns)
 
-    # Build persona + context prompt
+    # If no ML model loaded, use rule-based responder
+    if model is None or tokenizer is None:
+        reply = rule_based_reply(req.message)
+        return JSONResponse(
+            content={"reply": reply},
+            headers=cors_headers(request),
+        )
+
+    # --- ML path below: use persona + model ---
     prompt_parts = [PERSONA.strip()]
 
     if history_text:
@@ -198,15 +252,13 @@ async def chat(req: ChatRequest, request: Request):
 
     raw_reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # --- simple cleanup to avoid echoing the prompt ---
-    # If model repeats "Pengguna:" segment, keep only text after last "Asisten:"
-    reply = raw_reply
     if "Asisten:" in raw_reply:
         reply = raw_reply.split("Asisten:", maxsplit=1)[-1].strip()
+    else:
+        reply = raw_reply.strip()
 
-    # Avoid returning empty string
     if not reply:
-        reply = "Aku mendengar bahwa kamu sedang mengalami hal yang berat. Boleh ceritakan sedikit lebih detail apa yang membuatmu merasa seperti ini?"
+        reply = rule_based_reply(req.message)
 
     return JSONResponse(
         content={"reply": reply},
