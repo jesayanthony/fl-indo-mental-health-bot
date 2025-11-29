@@ -93,7 +93,11 @@ def cors_headers(request: Request) -> dict:
 
 @app.get("/health")
 def health(request: Request):
-    return JSONResponse(content={"status": "ok"}, headers(cors_headers(request)))
+    return JSONResponse(
+        content={"status": "ok"},
+        headers=cors_headers(request),
+    )
+
 
 
 @app.options("/chat")
@@ -135,3 +139,4 @@ async def chat(req: ChatRequest, request: Request):
         content={"reply": reply},
         headers=cors_headers(request),
     )
+
