@@ -1,0 +1,11 @@
+torch
+transformers
+sentencepiece
+fasttext-wheel
+datasets
+scikit-learn
+numpy
+pandas
+tqdm
+flwr      # if you want Flower for FL orchestration
+evaluate  # for BLEU/ROUGE/BERTScore, etc

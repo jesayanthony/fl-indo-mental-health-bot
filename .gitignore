@@ -1,0 +1,19 @@
+# Python venv
+.venv/
+
+# Model artifacts / checkpoints
+artifacts/
+
+# Python junk
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
