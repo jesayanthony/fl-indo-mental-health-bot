@@ -8,6 +8,7 @@ from typing import List, Optional
 import torch
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 from pydantic import BaseModel
 from google.cloud import storage
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -64,6 +65,16 @@ class ChatResponse(BaseModel):
 
 # ---------- App & model init ----------
 app = FastAPI(title="Mental Health FL Chatbot")
+
+# Add CORS middleware - THIS IS THE KEY FIX
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:55542", "http://localhost:*"],  # Add your Flutter origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods including OPTIONS
+    allow_headers=["*"],  # Allows all headers
+)
+
 print("[INFO] Starting up. Using device:", DEVICE)
 
 # Load model (GCS -> local -> load; fallback to HF if needed)
@@ -84,31 +95,15 @@ model.eval()
 print("[INFO] Model ready.")
 
 
-# ---------- CORS helper ----------
-def cors_headers(request: Request) -> dict:
-    origin = request.headers.get("origin") or "*"
-    # We don't use credentials, so "*" is safe.
-    return {
-        "Access-Control-Allow-Origin": origin if origin != "null" else "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    }
-
-
 # ---------- Routes ----------
 @app.get("/health")
-def health(request: Request):
-    return JSONResponse(content={"status": "ok"}, headers=cors_headers(request))
+def health():
+    return {"status": "ok"}
 
 
-# Preflight handler for /chat
-@app.options("/chat")
-async def options_chat(request: Request):
-    return PlainTextResponse("", status_code=200, headers=cors_headers(request))
-
-
+# You can remove the manual OPTIONS handler since CORSMiddleware handles it
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest, request: Request):
+async def chat(req: ChatRequest):
     # Build simple conversational prompt
     history_text = ""
     if req.history:
@@ -138,8 +133,4 @@ async def chat(req: ChatRequest, request: Request):
 
     reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # Manually attach CORS headers to response
-    return JSONResponse(
-        content={"reply": reply},
-        headers=cors_headers(request),
-    )
+    return {"reply": reply}
