@@ -1,5 +1,7 @@
 # serving/app.py
 
+from fastapi.middleware.cors import CORSMiddleware
+
 import os
 import time
 from pathlib import Path
@@ -66,6 +68,25 @@ class ChatResponse(BaseModel):
 
 
 app = FastAPI(title="Mental Health FL Chatbot")
+
+# Allow CORS for Flutter web / mobile dev
+origins = [
+    "http://localhost:50835",  # Flutter web dev (adjust if different port)
+    "http://localhost:5173",
+    "http://127.0.0.1:50835",
+    "http://127.0.0.1:5173",
+    # In prod you can restrict this more, but for now:
+    "*",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 print("[INFO] Starting up chatbot service...")
 print(f"[INFO] Using device: {DEVICE}")
