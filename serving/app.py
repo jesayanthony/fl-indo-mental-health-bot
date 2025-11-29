@@ -22,10 +22,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------- GCS download helper ----------
 def download_model_from_gcs(bucket_name: str, subdir: str, local_dir: str):
-    """
-    Download all files from gs://bucket_name/subdir into local_dir.
-    If local_dir is already populated, we skip downloading.
-    """
     local_path = Path(local_dir)
     if local_path.exists() and any(local_path.iterdir()):
         print(f"[INFO] Local model dir {local_dir} already has files, skipping download.")
@@ -34,19 +30,42 @@ def download_model_from_gcs(bucket_name: str, subdir: str, local_dir: str):
     print(f"[INFO] Downloading model from gs://{bucket_name}/{subdir} to {local_dir} ...")
     t0 = time.time()
 
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
 
-    blobs = bucket.list_blobs(prefix=subdir)
-    for blob in blobs:
-        # e.g. subdir='t5_fedavg_demo', blob.name='t5_fedavg_demo/config.json'
-        rel_path = blob.name[len(subdir):].lstrip("/")  # 'config.json'
-        dest_path = local_path / rel_path
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"[INFO] Downloading {blob.name} -> {dest_path}")
-        blob.download_to_filename(str(dest_path))
+        blobs = list(bucket.list_blobs(prefix=subdir))
+        if not blobs:
+            print(f"[WARN] No blobs found under {subdir}. Check bucket name/path.")
 
-    print(f"[INFO] Download finished in {time.time() - t0:.2f} seconds.")
+        for blob in blobs:
+            rel_path = blob.name[len(subdir):].lstrip("/")
+            dest_path = local_path / rel_path
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"[INFO] Downloading {blob.name} -> {dest_path}")
+            blob.download_to_filename(str(dest_path))
+
+        print(f"[INFO] Download finished in {time.time() - t0:.2f} seconds.")
+    except Exception as e:
+        print("[ERROR] Failed to download model from GCS:", e)
+        # We don't re-raise, so service can still boot (with fallback)
+
+
+print(f"[INFO] Loading tokenizer/model from {MODEL_LOCAL_DIR}")
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_LOCAL_DIR)
+    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_LOCAL_DIR)
+except Exception as e:
+    print("[ERROR] Failed to load model from local dir:", e)
+    FALLBACK_MODEL = "indonlp/cendol-mt5-small-chat"
+    print(f"[INFO] Falling back to base model: {FALLBACK_MODEL}")
+    tokenizer = AutoTokenizer.from_pretrained(FALLBACK_MODEL)
+    model = AutoModelForSeq2SeqLM.from_pretrained(FALLBACK_MODEL)
+
+model.to(DEVICE)
+model.eval()
+print("[INFO] Model loaded and ready.")
+
 
 
 # ---------- FastAPI schemas ----------
