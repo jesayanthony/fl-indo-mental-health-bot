@@ -62,6 +62,26 @@ class ChatResponse(BaseModel):
 app = FastAPI(title="Mental Health FL Chatbot")
 print("[INFO] Starting up. Using device:", DEVICE)
 
+PERSONA = """
+Kamu adalah asisten konseling kesehatan mental berbahasa Indonesia.
+Peranmu:
+- Mendengarkan dengan empati dan tanpa menghakimi.
+- Mengakui dan memvalidasi perasaan pengguna.
+- Menjawab dengan kalimat pendek-pendek, jelas, dan hangat.
+- Mengajukan 1–2 pertanyaan lanjutan yang lembut untuk memahami situasi.
+- Mengingatkan bahwa kamu bukan psikolog/psikiater dan tidak bisa memberi diagnosis atau obat.
+- Jika ada indikasi keinginan bunuh diri atau bahaya serius, sarankan untuk segera mencari bantuan profesional atau layanan darurat setempat.
+
+Gaya bahasa:
+- Gunakan kata ganti “kamu” untuk pengguna, dan “aku” untuk dirimu.
+- Gunakan bahasa santai, sopan, dan menenangkan.
+- Jangan mengulang persis kalimat pengguna, cukup rangkum perasaannya.
+- Jangan menilai atau menyalahkan.
+
+Sekarang bantu jawab keluhan pengguna dengan penuh empati.
+"""
+
+
 # ----- Model load -----
 try:
     download_model_from_gcs(MODEL_BUCKET, MODEL_SUBDIR, MODEL_LOCAL_DIR)
@@ -107,63 +127,54 @@ async def options_chat(request: Request):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
+    # Format history into a compact conversation
     history_text = ""
     if req.history:
-        history_text = "\n".join(req.history[-5:])
+        last_turns = req.history[-6:]  # last few turns
+        history_text = "\n".join(last_turns)
 
-    persona = """
-        Kamu adalah asisten kesehatan mental dalam bahasa Indonesia.
-        Sifatmu empatik, hangat, dan tidak menghakimi. 
-        Tugasmu adalah:
-        - Membantu pengguna mengekspresikan perasaan dengan aman.
-        - Memberikan validasi dan dukungan emosional.
-        - Menawarkan saran ringan seperti teknik relaksasi, journaling, atau mencari bantuan profesional.
-        Hal yang TIDAK BOLEH kamu lakukan:
-        - Memberikan diagnosis medis atau psikologis.
-        - Menyarankan obat, dosis, atau tindakan medis spesifik.
-        - Menghakimi atau menyalahkan pengguna.
-
-        Jawabanmu:
-        - Pendek (2–5 kalimat).
-        - Menggunakan bahasa Indonesia yang sopan dan mudah dipahami.
-        - Sertakan disclaimer singkat bahwa kamu bukan tenaga profesional.
-    """
-
-    history_text = ""
-    if req.history:
-        history_text = "\n".join(req.history[-5:])
-
-    prompt = persona.strip() + "\n\n"
-    if history_text:
-        prompt += f"Riwayat percakapan sebelumnya:\n{history_text}\n\n"
-
-    prompt += f"Percakapan baru:\nPengguna: {req.message}\nAsisten:"
+    # Build persona + context prompt
+    prompt_parts = [PERSONA.strip()]
 
     if history_text:
-        prompt += f"Riwayat percakapan sebelumnya:\n{history_text}\n\n"
-    prompt += f"Pengguna: {req.message}\nAsisten:"
+        prompt_parts.append("Riwayat percakapan sebelumnya:")
+        prompt_parts.append(history_text)
+
+    prompt_parts.append(f"Pengguna: {req.message}")
+    prompt_parts.append("Asisten:")
+
+    prompt = "\n\n".join(prompt_parts)
 
     inputs = tokenizer(
         prompt,
         return_tensors="pt",
         truncation=True,
-        max_length=128,
+        max_length=256,
     ).to(DEVICE)
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_length=128,
+            max_length=256,
             num_beams=4,
             do_sample=True,
             top_p=0.9,
             temperature=0.7,
         )
 
-    reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    raw_reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    # --- simple cleanup to avoid echoing the prompt ---
+    # If model repeats "Pengguna:" segment, keep only text after last "Asisten:"
+    reply = raw_reply
+    if "Asisten:" in raw_reply:
+        reply = raw_reply.split("Asisten:", maxsplit=1)[-1].strip()
+
+    # Avoid returning empty string
+    if not reply:
+        reply = "Aku mendengar bahwa kamu sedang mengalami hal yang berat. Boleh ceritakan sedikit lebih detail apa yang membuatmu merasa seperti ini?"
 
     return JSONResponse(
         content={"reply": reply},
         headers=cors_headers(request),
     )
-
